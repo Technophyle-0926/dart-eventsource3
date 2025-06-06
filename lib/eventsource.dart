@@ -6,7 +6,6 @@ import "dart:async";
 import "dart:convert";
 
 import "package:http/http.dart" as http;
-import "package:http/src/utils.dart" show encodingForCharset;
 import "package:http_parser/http_parser.dart" show MediaType;
 
 import "src/event.dart";
@@ -153,4 +152,9 @@ MediaType _contentTypeForHeaders(Map<String, String> headers) {
   var contentType = headers['content-type'];
   if (contentType != null) return new MediaType.parse(contentType);
   return new MediaType("application", "octet-stream");
+}
+
+Encoding encodingForCharset(String? charset, [Encoding fallback = latin1]) {
+  if (charset == null) return fallback;
+  return Encoding.getByName(charset) ?? fallback;
 }

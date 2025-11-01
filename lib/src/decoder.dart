@@ -8,64 +8,86 @@ import "event.dart";
 typedef RetryIndicator = void Function(Duration retry);
 
 class EventSourceDecoder implements StreamTransformer<List<int>, Event> {
-  RetryIndicator? retryIndicator;
+  final RetryIndicator? retryIndicator;
 
   EventSourceDecoder({this.retryIndicator});
 
+  @override
   Stream<Event> bind(Stream<List<int>> stream) {
     late StreamController<Event> controller;
-    controller = new StreamController(onListen: () {
-      // the event we are currently building
-      Event currentEvent = new Event();
-      // the regexes we will use later
-      RegExp lineRegex = new RegExp(r"^([^:]*)(?::)?(?: )?(.*)?$");
-      // RegExp removeEndingNewlineRegex = new RegExp(r"^((?:.|\n)*)\n$");
-      // This stream will receive chunks of data that is not necessarily a
-      // single event. So we build events on the fly and broadcast the event as
-      // soon as we encounter a double newline, then we start a new one.
+
+    controller = StreamController<Event>(onListen: () {
+      Event currentEvent = Event();
+
       stream
-          .transform(new Utf8Decoder())
-          .transform(new LineSplitter())
-          .listen((String line) {
-        if (line.isEmpty) {
-          // event is done
-          // strip ending newline from data
-          if (currentEvent.data != null) {
-            // var match = removeEndingNewlineRegex.firstMatch(currentEvent.data!);
-            // currentEvent.data = match?.group(1);
-            currentEvent.data = currentEvent.data!.trimRight();
+          .transform(const Utf8Decoder())
+          .transform(const LineSplitter())
+          .listen(
+        (String line) {
+          if (line.isEmpty) {
+            if (currentEvent.data != null) {
+              currentEvent.data = currentEvent.data!.trimRight();
+            }
+            controller.add(currentEvent);
+            currentEvent = Event();
+            return;
           }
-          controller.add(currentEvent);
-          currentEvent = new Event();
-          return;
-        }
-        // match the line prefix and the value using the regex
-        Match? match = lineRegex.firstMatch(line);
-        String? field = match?.group(1);
-        String? value = match?.group(2) ?? "";
-        if (field?.isEmpty == true) {
-          // lines starting with a colon are to be ignored
-          return;
-        }
-        switch (field) {
-          case "event":
-            currentEvent.event = value;
-            break;
-          case "data":
-            currentEvent.data = (currentEvent.data ?? "") + value + "\n";
-            break;
-          case "id":
-            currentEvent.id = value;
-            break;
-          case "retry":
-            retryIndicator?.call(new Duration(milliseconds: int.parse(value)));
-            break;
-        }
-      });
+
+          if (line.startsWith(':')) {
+            return;
+          }
+
+          final int colonIndex = line.indexOf(':');
+          String field;
+          String value;
+
+          if (colonIndex == -1) {
+            field = line;
+            value = '';
+          } else {
+            field = line.substring(0, colonIndex);
+            int startIndex = colonIndex + 1;
+            if (startIndex < line.length && line[startIndex] == ' ') {
+              startIndex++;
+            }
+            value = line.substring(startIndex);
+          }
+
+          switch (field) {
+            case 'event':
+              currentEvent.event = value;
+              break;
+            case 'data':
+              currentEvent.data = (currentEvent.data ?? '') + value + '\n';
+              break;
+            case 'id':
+              currentEvent.id = value;
+              break;
+            case 'retry':
+              final retryMs = int.tryParse(value);
+              if (retryMs != null) {
+                retryIndicator?.call(Duration(milliseconds: retryMs));
+              }
+              break;
+            default:
+              break;
+          }
+        },
+        onError: (e, st) {
+          print('[EventSourceDecoder] Stream error: $e');
+          controller.addError(e, st);
+        },
+        onDone: () {
+          controller.close();
+        },
+        cancelOnError: false,
+      );
     });
+
     return controller.stream;
   }
 
+  @override
   StreamTransformer<RS, RT> cast<RS, RT>() =>
       StreamTransformer.castFrom<List<int>, Event, RS, RT>(this);
 }
